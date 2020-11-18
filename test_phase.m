@@ -5,7 +5,8 @@ function test_phase(debug)
 %        0, fMRI run with button box input
 % 11/10/20 by Liwei Sun
 
-imouse = 10; % double check with GetMouseIndices
+ntriggers = 31; % how many TRs per volume
+imouse = 12; % double check with GetMouseIndices
 possiblekn1 = [1,3];
 possiblekn2 = 1:3;
 
@@ -21,9 +22,9 @@ group = input('group? (A/B)', 's');
 run = input('run?');
 
 if run == 1
-    %     [old_words, new_words] = get_wordlist(group);
-    old_words = arrayfun(@(d) num2str(d), (1:100)', 'uni', 0);
-    new_words = arrayfun(@(d) num2str(d), (101:200)', 'uni', 0);
+    [old_words, new_words] = get_wordlist(group);
+%     old_words = arrayfun(@(d) num2str(d), (1:100)', 'uni', 0);
+%     new_words = arrayfun(@(d) num2str(d), (101:200)', 'uni', 0);
     nold = numel(old_words);
     nnew = numel(new_words);
     wordlist = [old_words; new_words];
@@ -32,6 +33,13 @@ if run == 1
     seqlist = [1:nwords;
         ones(1, numel(old_words)), zeros(1, numel(new_words));]';
     seq = Shuffle(seqlist, 2);
+
+%     bpass = 0;
+%     while ~bpass
+%         seq = Shuffle(seqlist, 2);
+%         bpass = check_rep(seq);
+%     end
+    
     % first col of seq contains the index of the word in wordlist
     % second col of seq contains bool whethter it is an old word
     trial_start = 1;
@@ -59,23 +67,23 @@ fprintf(outfile, ...
 
 % MR parameters
 tr = 0;
-pretr = 5; % wait 5 TRs for BOLD to be stable
+pretr = 5 * ntriggers; % wait 5 TRs for BOLD to be stable
 if debug
     BUFFER = [];    
     fRead = @() ReadFakeTrigger;
     tr_tmr = timer('TimerFcn', @SetTrigger, 'Period', 2, ...
         'ExecutionMode', 'fixedDelay', 'Name', 'tr_timer');
 else
+    tbeginning = NaN;
     trigger = 57; %GE scanner with MR Technology Inc. trigger box
     IOPort('Closeall');
-    P4 = IOPort('OpenSerialPort', ...
-        '/dev/serial/by-path/pci-0000:05:00.3-usb-0:2:1.0', 'BaudRate=9600');
+    P4 = getport;
     fRead = @() ReadScanner;
 end
 
 rng('shuffle');
 sid = 0;
-srect = [0 0 1025 769];
+srect = [0 0 801 601];
 fixpi = 6;
 
 white = [255 255 255];
@@ -93,17 +101,21 @@ tpost = .5;
 tconf = 3;
 
 [mainwin, rect] = Screen('OpenWindow', sid, bgcolor, srect);
+Screen('TextFont', mainwin, 'Simsun'); % font to show Chinese
 fixRect = CenterRect([0 0 fixpi fixpi], rect);
-Screen('FillRect', mainwin, fixcolor, fixRect);
+% Screen('FillRect', mainwin, fixcolor, fixRect);
 
 
-pretext = 'ready';
+pretext = double('请准备');
 DrawFormattedText(mainwin, double(pretext), 'center', 'center', textcolor);
 Screen('Flip', mainwin);
 
 if debug
     start(tr_tmr);
+    tbeginning = GetSecs;
 end
+
+ncor = 0;
 
 TRWait(pretr);
 start_time = GetSecs;
@@ -142,7 +154,7 @@ for itrial = trial_start:trial_end
     Screen('Flip', mainwin);
     WaitSecs(tpost);
     
-    DrawFormattedText(mainwin, 'How sure are you?', 'center', 'center', ...
+    DrawFormattedText(mainwin, double('你有多确定?'), 'center', 'center', ...
         textcolor);
     [~, conf_onset] = Screen('Flip', mainwin);
     
@@ -171,9 +183,15 @@ for itrial = trial_start:trial_end
         subj, group, run, itrial, wordlist{iword}, ...
         trial_onset - start_time, jitter, text_onset - start_time, ...
         bold, keypressed1, rt1, keypressed2, rt2);
+    
+    if (bold == 1 && keypressed1 == 1) || (bold == 0 && keypressed1 == 3)
+        ncor = ncor + 1;
+    end
 end
 
 WaitSecs(6);
+fprintf(outfile, '%s:\t %f\t %s:\t %f\t', 'TR1', tbeginning, 'Trial1', ...
+    start_time);
 fclose(outfile);
 
 if debug
@@ -182,7 +200,24 @@ else
     IOPort('Closeall');
 end
 sca;
+disp(ncor/ntrials);
 
+    function b = check_rep(seq)
+        b = 1;
+        s = seq(:, 2);
+        cnt = 0;
+        for i = 2:numel(s)
+            if s(i) == s(i-1)
+                cnt = cnt + 1;
+                if cnt == 2
+                    b = 0;
+                    return
+                end
+            else
+                cnt = 0;
+            end
+        end
+    end
     function [data, when] = ReadScanner
         [data, when] = IOPort('Read', P4);
         
